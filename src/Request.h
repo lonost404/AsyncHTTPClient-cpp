@@ -21,37 +21,40 @@
 
 class Request {
 
-    char* buffer = nullptr;
+    char* buffer;
     int header_size;
-    int content_length = 0x7FFFFFFF;
-    bool ssl_connected = false;
-    int last_buffer_size = 0;
+    int content_length;
+    bool ssl_connected;
+    int last_buffer_size;
     char * method;
     struct epoll_event event;
     char recv_buffer[1024];
-    bool secure = false;
+    bool secure;
     std::function<void(Request& req)> on_data;
+    std::function<void(Request& req)> on_open;
     std::function<void(Request& req)> on_close;
-    SSL* ssl = nullptr;
+    
+    SSL* ssl;
     RequestLoop& rl;
-    std::string path = "/";
+    std::string path;
 
     void createSecureConnection();
-    
     void recvData();
     
 
 
 public:
-    char* data;
-    char* text;
+    const char* data;
+    const char* text;
     int sockfd;
     int port;
-    char* headers = nullptr;
+    char* headers;
     std::string host;
 
     Request& onData(std::function<void(Request& req)> f);
+    Request& onOpen(std::function<void(Request& req)> f);
     Request& onClose(std::function<void(Request& req)> f);
+    
     void createConnection();
     void closeConnection();
     void sendRequest();

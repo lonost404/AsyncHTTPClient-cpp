@@ -16,14 +16,12 @@
 class Request;
 
 class RequestLoop {
-
 	std::map<std::string, struct addrinfo> dns_cache;
 	int epfd;
-	int connections = 0;
-	bool stop = false;
+	int connections;
+	bool stop;
 	
-public:
-	
+public:	
 	RequestLoop();
 	void loop();
 	Request& createRequest(const char* method, const char* url);
