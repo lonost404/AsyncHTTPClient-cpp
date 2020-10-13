@@ -1,12 +1,14 @@
 
-#include "Request.h"
+#include "Request.hpp"
 
 RequestLoop::RequestLoop()
-: epfd(epoll_create1(0)), stop(false), connections(0) { }
+: epfd(epoll_create1(0)), stop(false), requests_num(0) { }
 
-Request& RequestLoop::createRequest(const char* method, const char* url) {
-    return *(new Request(*this, method, url));
+
+Request& RequestLoop::createRequest(std::string_view method, std::string_view url) { 
+    return *(new Request(*this, std::move(method), std::move(url)));
 }
+
 
 void RequestLoop::loop() {
     struct epoll_event events[1024];
@@ -16,7 +18,7 @@ void RequestLoop::loop() {
     new_events.events = EPOLLIN;
 
     while (!stop) {
-        num_ready = epoll_wait(epfd, events, 1024, 50);
+        num_ready = epoll_wait(epfd, events, 1024, 1000);
 
         if (num_ready < 0)
             perror("Error in epoll_wait!");
@@ -30,7 +32,7 @@ void RequestLoop::loop() {
 
             if (events[i].events & EPOLLHUP) {
                 printf("Error connecting to server, socket: %d\n", events[i].data.fd);
-                connections--;
+                requests_num--;
                 epoll_ctl(epfd, EPOLL_CTL_DEL, r.sockfd, NULL);
                 r.closeConnection();
             }

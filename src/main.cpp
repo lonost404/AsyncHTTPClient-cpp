@@ -1,19 +1,16 @@
-#include "Request.h"
+#include "Request.hpp"
 
 int main(int argc, char **argv) {
 
 	RequestLoop rl;
 
-	rl.createRequest("GET", "https://g.co/").onOpen([] (Request& req) {
-		req.sendRequest();
-	}).onData([] (Request& req) {
-		std::cout << "Headers: " << req.headers << std::endl;
-		std::cout << "Data: " << req.text << std::endl;
-		req.closeConnection();
-		req.end();
-	}).onClose([] (Request& req) {
-		std::cout << "Closing connection.." << std::endl;
-	});
+	for (int i=0; i<2; i++) {
+		rl.createRequest("POST", "https://g.co/").setData({{"key1", "value1"}, {"key2", "value2"}}).onData([] (auto& req) {
+			std::cout<<req.text<<std::endl;
+			req.closeConnection();
+		});
+	}
+	
 
 	rl.loop();
 }

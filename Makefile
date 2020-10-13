@@ -8,15 +8,17 @@ SRC_FILES := $(wildcard $(SRC_DIR)*.cpp)
 OBJ_FILES := $(patsubst $(SRC_DIR)%.cpp,$(OBJ_DIR)%.o,$(SRC_FILES))
 DEP_FILES := $(patsubst $(SRC_DIR)%.cpp,$(OBJ_DIR)%.d,$(SRC_FILES))
 
-
 # compiler options
-CPPFLAGS += -O2 -std=c++17 -Wall 
+CPPFLAGS += -O2 -std=c++17 -Wall
 
 # link options
-LDFLAGS += -l ssl -lpthread 
+LDFLAGS += -l ssl -lpthread
 
 
 all: $(TARGET)
+segf: CPPFLAGS += -Og -g -fsanitize=address
+segf: LDFLAGS += -Og -g -fsanitize=address
+segf: $(TARGET)
 
 $(TARGET): $(OBJ_FILES)
 	g++ -o $@ $^ $(LDFLAGS)
@@ -27,5 +29,4 @@ $(OBJ_DIR)%.o: $(SRC_DIR)%.cpp
 clean:
 	rm -f $(TARGET) $(OBJ_FILES) $(DEP_FILES)
 	
-
 -include $(DEP_FILES)

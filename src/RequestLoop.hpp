@@ -11,21 +11,19 @@
 #include <string>
 #include <map>
 
-#include "Request.h"
 
 class Request;
 
 class RequestLoop {
-	std::map<std::string, struct addrinfo> dns_cache;
+	std::map<std::string, addrinfo*> dns_cache;
 	int epfd;
-	int connections;
+	int requests_num;
 	bool stop;
 	
 public:	
 	RequestLoop();
 	void loop();
-	Request& createRequest(const char* method, const char* url);
-
+	Request& createRequest(std::string_view method, std::string_view url);
 	friend Request;
 	
 };

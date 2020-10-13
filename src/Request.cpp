@@ -1,24 +1,24 @@
-#include "Request.h"
+#include "Request.hpp"
 
-
-
-Request::Request(RequestLoop& rl, const char *method, const char *url, const char *data) 
+Request::Request(RequestLoop& rl, std::string_view method, std::string_view url) 
 : rl(rl), 
-  method((char*)method), 
-  data(data), 
-  host(url),
+  method(std::move(method)), 
+  host(std::move(url)),
   content_length(0x7FFFFFFF),
   buffer(nullptr),
   ssl_connected(false),
   last_buffer_size(0),
   path("/"),
   ssl(nullptr),
-  // Default functions 
-  on_data([] (Request& r) { r.closeConnection(); r.end(); }),
+  on_data([] (Request& r) { r.closeConnection(); }),
   on_open([] (Request& r) { r.sendRequest(); }), 
-  on_close([] (Request& r) { }),
-  headers(nullptr) {
+  on_close([] (Request& r) { r.end(); }),
+  request_buffer(""),
+  request_headers({ }), 
+  header_size(0) { 
     
+    rl.requests_num++;
+
     if (host.find("http://") == 0) {
         host = host.substr(7, host.length());
         port = 80;        
@@ -42,11 +42,10 @@ Request::Request(RequestLoop& rl, const char *method, const char *url, const cha
         host = host.substr(0, pos);
     }
 
-    createConnection();
-}
+    request_headers = {{"Host", host}, {"User-Agent", "AsyncHttpClient"}, {"Accept", "*/*"}}; // Default headers
 
-Request::~Request() {
-    free(buffer);
+    buildRequest();
+    createConnection();
 }
 
 void Request::recvData() {
@@ -57,6 +56,7 @@ void Request::recvData() {
             recv_size = SSL_read(ssl, recv_buffer, 1024);
             if (int pending = SSL_pending(ssl); pending > 0) {
                 char *new_buffer = (char*)malloc(pending + recv_size);
+                
                 memcpy(new_buffer, recv_buffer, recv_size);
 
                 recv_size += SSL_read(ssl, new_buffer + recv_size, pending);
@@ -91,21 +91,22 @@ void Request::recvData() {
         //Set new buffer
         buffer = new_buffer;
 
-        if (!headers) {
+        if (headers.empty()) {
 
             char *p = strstr(recv_buffer, "\r\n\r\n");
 
             if (p) { // Headers are ready
 
                 int size = last_buffer_size + (p - recv_buffer);
-                headers = (char *)malloc(size);
-                memcpy(headers, recv_buffer, size);
+                char h[size]; 
+                memcpy(h, recv_buffer, size);
+                headers = h;
 
                 //Set header size
                 header_size = size;
 
                 //Get content-length
-                char *pos = strstr(headers, "Content-Length: ") + 16;
+                const char *pos = strstr(headers.c_str(), "Content-Length: ") + 16;
                 content_length = atoi(pos);
 
             }
@@ -114,8 +115,16 @@ void Request::recvData() {
         last_buffer_size += recv_size;
 
         if ((last_buffer_size - header_size - 4) >= content_length) { // All request recived
-            text = buffer + header_size + 4;
-            on_data(*this);            
+            text = std::string((char*)buffer + header_size + 4);
+
+            on_data(*this);
+
+            content_length = 0;
+            header_size = 0;
+            last_buffer_size = 0;
+
+            headers.erase();
+            
         }
     }
     else if (!recv_size) {
@@ -146,25 +155,30 @@ void Request::closeConnection() {
 
     ssl_connected = false;
     close(sockfd);
-    --rl.connections;
     on_close(*this);
     
 }
+
+Request::~Request() {
+    if (buffer) { free(buffer); }
+}
+
 void Request::end() {
-    
-    if (!rl.connections) {
+    if (--rl.requests_num <= 0) {
         rl.stop = true;
     }
+
     delete this;
 }
 void Request::createConnection() {
-    rl.connections++;
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
 
     auto pos = rl.dns_cache.find(host);
-    struct addrinfo *res = (addrinfo *)malloc(sizeof(addrinfo));
+    struct addrinfo *res;
+    
 
     if (pos == rl.dns_cache.end()) {
+        //res = (addrinfo *)malloc(sizeof(addrinfo));
         //Resolve hostname
         struct addrinfo hints;
 
@@ -180,11 +194,12 @@ void Request::createConnection() {
         }
 
         //Insert in dns cache table
-        rl.dns_cache.insert(std::make_pair(host, *res));
+        rl.dns_cache.insert(std::make_pair(host, res));
     }
     else { 
-        *res = pos->second;
+        res = pos->second;
     }
+    
 
     //Set nonblocking socket
     fcntl(sockfd, F_SETFL, fcntl(sockfd, F_GETFL, 0) | O_NONBLOCK);
@@ -208,10 +223,9 @@ void Request::createConnection() {
     connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr));
     
 }
-
-void Request::sendRequest() {
-
-    if (buffer) {
+void Request::buildRequest() {
+    
+    /*if (buffer) {
         free(buffer);
         free(headers);
 
@@ -220,20 +234,22 @@ void Request::sendRequest() {
 
         content_length = 0;
         header_size = 0;
-        last_buffer_size = 0;   
-    }
-    std::string _data;
-    if (data == nullptr) {
-        _data = std::string(method) + " " + path + " HTTP/1.1\r\nHost: " + host + "\r\n\r\n";
-    }
-    else {
-        _data = std::string(method) + " " + path + " HTTP/1.1\r\nHost: " + host + "\r\n" + data + "\r\n";
+        last_buffer_size = 0;
+    }*/
+
+    request_buffer = method + " " + path + " HTTP/1.1\r\n";
+    for(auto &header : request_headers) {
+        request_buffer += header.first + ": " + header.second + "\r\n";
     }
 
+    request_buffer +=  "\r\n" + request_data;
+}
+
+void Request::sendRequest() {
     if (secure) {
-        SSL_write(ssl, _data.c_str(), _data.length());
+        SSL_write(ssl, request_buffer.c_str(), request_buffer.length());
     } else {
-        send(sockfd, _data.c_str(), _data.length(), 0);
+        send(sockfd, request_buffer.c_str(), request_buffer.length(), 0);
     }
 }
 void Request::createSecureConnection() {
@@ -244,8 +260,7 @@ void Request::createSecureConnection() {
 
         if (!ssl)
         {
-            std::cout << "Error creating SSL.\n"
-                    << std::endl;
+            printf("Error creating SSL.\n");
             return;
         }
         
@@ -258,4 +273,73 @@ void Request::createSecureConnection() {
         ssl_connected = false;
     }
 
+}
+
+Request& Request::setData(std::string_view data, bool build) {
+    request_data = data;
+    request_headers["Content-Length"] = std::to_string(request_data.length());
+    if (build) { 
+        buildRequest(); 
+    }
+    return *this;
+}
+
+Request& Request::setData(std::map<std::string, std::string> data, bool build) {
+    
+    request_data = "";
+    for(auto &data_pair : data) {
+        request_data += data_pair.first + "=" + data_pair.second + "&";
+    }
+
+    request_data = request_data.substr(0, request_data.length()-1);
+    request_headers["Content-Length"] = std::to_string(request_data.length());
+    if (build) {
+        buildRequest(); 
+    }
+    return *this;
+}
+
+
+Request& Request::setJsonData(nlohmann::json& data, bool build) {
+    
+    request_data = data.dump();
+
+    request_headers["Content-Length"] = std::to_string(request_data.length());
+    request_headers["Content-Type"] = "application/json";
+    
+    if (build) {
+        buildRequest(); 
+    }
+    return *this;
+}
+
+Request& Request::setHeader(std::string_view key, std::string value, bool build) {
+    request_headers[key.data()] = value;
+    if (build) { 
+        buildRequest(); 
+    }
+    return *this;
+}
+
+Request& Request::setHeaders(std::map<std::string, std::string> h, bool build) {
+    request_headers = std::move(h);
+    if (build) { 
+        buildRequest(); 
+    }
+    return *this;
+}
+
+std::string_view Request::getHeader(std::string_view key) {
+    std::string_view value;
+
+    if (auto pos = headers.find(key); pos != std::string::npos) {
+        value = headers.substr(pos + key.size() + 2, headers.length()).c_str();
+        value = value.substr(0, value.find("\r"));
+    } else {
+        value = "";
+    }
+    return value;
+}
+std::string Request::getHeaders() {
+    return headers;
 }
